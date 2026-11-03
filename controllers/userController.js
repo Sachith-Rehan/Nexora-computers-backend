@@ -9,6 +9,18 @@ dotenv.config();
 export async function createUser(req , res){
     
     try{
+        const isAdmin = req.body.isAdmin === true;
+        if (isAdmin) {
+            if (!req.user?.email) {
+                return res.status(401).json({ message: "Sign in to create an admin account." });
+            }
+            if (req.user.isAdmin !== true || !await User.exists({
+                email: req.user.email, isAdmin: true, isBlocked: false
+            })) {
+                return res.status(403).json({ message: "Only an active admin can create an admin account." });
+            }
+        }
+
         const user = await User.findOne({email : req.body.email});
 
         if(user){
@@ -22,6 +34,7 @@ export async function createUser(req , res){
             email : req.body.email,
             firstName : req.body.firstName,
             lastName : req.body.lastName,
+            isAdmin,
             password : passwordHash
         })
 
@@ -119,6 +132,24 @@ export async function loginUser(req , res){
         res.json({message : error.message});
     }        
 
+}
+
+export async function listUsers(req, res) {
+    if (!req.user?.email) {
+        return res.status(401).json({ message: "Sign in to view users." });
+    }
+    try {
+        if (req.user.isAdmin !== true || !await User.exists({
+            email: req.user.email, isAdmin: true, isBlocked: false
+        })) {
+            return res.status(403).json({ message: "Only active admins can view users." });
+        }
+        const users = await User.find({}, "firstName lastName email isAdmin isBlocked isEmailVerified")
+            .sort({ _id: -1 }).lean();
+        return res.json({ users });
+    } catch {
+        return res.status(500).json({ message: "Unable to load users." });
+    }
 }
 
 export async function getUser(req, res) {

@@ -187,12 +187,9 @@ export async function getAllOrders(req, res) {
         });
     }
 
-    // Check admin
-    // if (!req.user.isAdmin) {
-    //     return res.status(403).json({
-    //         message: "Only admins can access all orders"
-    //     });
-    // }
+    if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Only admins can access all orders" });
+    }
 
     try {
 
@@ -202,16 +199,22 @@ export async function getAllOrders(req, res) {
         const pageSize = parseInt(pageSizeInString);
         const pageNumber = parseInt(pageNumberString);
 
-        // Count ALL orders
-        const orderCount = await Order.countDocuments();
+        const filter = {};
+        const { search = "", status = "" } = req.query;
+        if (typeof search !== "string" || typeof status !== "string" || search.trim().length > 100) {
+            return res.status(400).json({ message: "Invalid order filters" });
+        }
+        if (status) filter.status = status;
+        if (search.trim()) {
+            const escaped = search.trim().replace(/[.*+?^|{}()\[\]\\$]/g, "\\$&");
+            const pattern = new RegExp(escaped, "i");
+            filter.$or = [{ orderId: pattern }, { email: pattern }];
+        }
 
-        const totalPages = Math.ceil(
-            orderCount / pageSize
-        );
-
-        // Get orders
-        const orders = await Order.find()
-            .sort({ date: -1 })
+        const orderCount = await Order.countDocuments(filter);
+        const totalPages = Math.ceil(orderCount / pageSize);
+        const orders = await Order.find(filter)
+            .sort({ date: -1, _id: -1 })
             .skip((pageNumber - 1) * pageSize)
             .limit(pageSize);
 
@@ -233,56 +236,35 @@ export async function getAllOrders(req, res) {
 }
 
 export async function getOrdersByUser(req, res) {
-
-    // Check login
-    if (req.user == null) {
-        return res.status(401).json({
-            message: "Unauthorized"
-        });
+    if (!req.user?.email) {
+        return res.status(401).json({ message: "Unauthorized" });
     }
 
-    
-    
+    const pageNumber = Number(req.params.pageNumber);
+    const pageSize = Number(req.params.pageSize);
+    if (!Number.isSafeInteger(pageNumber) || pageNumber < 1 ||
+        !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+        return res.status(400).json({ message: "Invalid pagination" });
+    }
 
     try {
-
-        const pageSizeInString = req.params.pageSize || "10";
-        const pageNumberString = req.params.pageNumber || "1";
-
-        const pageSize = parseInt(pageSizeInString);
-        const pageNumber = parseInt(pageNumberString);
-
-        // Count ALL orders
-        const orderCount = await Order.countDocuments();
-
-        const totalPages = Math.ceil(
-            orderCount / pageSize
-        );
-
-        // Get orders
-        const orders = await Order.find({email : req.params.email})
-            .sort({ date: -1 })
-            .skip((pageNumber - 1) * pageSize)
-            .limit(pageSize);
-
+        const filter = { email: req.user.email };
+        const [orders, totalOrders] = await Promise.all([
+            Order.find(filter).sort({ date: -1, _id: -1 })
+                .skip((pageNumber - 1) * pageSize).limit(pageSize),
+            Order.countDocuments(filter)
+        ]);
         return res.json({
-            orders: orders,
-            totalPages: totalPages,
+            orders,
+            totalOrders,
             currentPage: pageNumber,
-            totalOrders: orderCount
+            totalPages: Math.ceil(totalOrders / pageSize)
         });
-
     } catch (err) {
-
-        console.log(err);
-
-        return res.status(500).json({
-            message: err.message
-        });
+        console.error(err);
+        return res.status(500).json({ message: "Unable to load orders" });
     }
 }
-
-
 
 export async function updateOrderStatus(req, res) {
     if (req.user == null || !req.user.isAdmin) {

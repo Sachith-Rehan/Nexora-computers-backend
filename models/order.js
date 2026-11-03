@@ -43,6 +43,14 @@ const orderSchema = new mongoose.Schema({
         required: true
     },
 
+    paymentMethod: { type: String, enum: ["cod", "bank_transfer"] },
+    paymentStatus: { type: String, enum: ["awaiting_payment", "awaiting_verification", "paid"] },
+    transferReference: String,
+    receiptData: { type: Buffer, select: false },
+    receiptType: String,
+    bankAccount: { bank: String, branch: String, holder: String, number: String },
+    deliveryFee: Number,
+
     status: {
         type: String,
         required: true,

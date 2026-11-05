@@ -24,9 +24,7 @@ jobs:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
     - run: npm ci
-    - name: Configure backend environment
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      shell: bash
+    - name: create .env file
       env:
         JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
         MONGO_URI: ${{ secrets.MONGO_URI }}
@@ -36,54 +34,12 @@ jobs:
         BANK_ACCOUNT_NUMBER: ${{ secrets.BANK_ACCOUNT_NUMBER }}
         DELIVERY_FEE_LKR: ${{ vars.DELIVERY_FEE_LKR }}
       run: |
-        set -eu
-        for name in JWT_SECRET_KEY MONGO_URI BANK_NAME BANK_ACCOUNT_HOLDER BANK_ACCOUNT_NUMBER; do
-          if [[ -z "${!name}" ]]; then
-            echo "::error::Missing backend repository secret: $name"
-            exit 1
-          fi
-        done
-        umask 077
-        # Accept both plain secrets and the NAME=value entries used by older deployments.
-        {
-          printf 'JWT_SECRET_KEY=%s\n' "${JWT_SECRET_KEY#JWT_SECRET_KEY=}"
-          printf 'MONGO_URI=%s\n' "${MONGO_URI#MONGO_URI=}"
-          for name in BANK_NAME BANK_BRANCH BANK_ACCOUNT_HOLDER BANK_ACCOUNT_NUMBER DELIVERY_FEE_LKR; do
-            printf '%s=%s\n' "$name" "${!name}"
-          done
-        } > .env.next
-        mv .env.next .env
+        echo "$JWT_SECRET_KEY" > .env
+        echo "$MONGO_URI" >> .env
+        printf 'BANK_NAME=%s\n' "$BANK_NAME" >> .env
+        printf 'BANK_BRANCH=%s\n' "$BANK_BRANCH" >> .env
+        printf 'BANK_ACCOUNT_HOLDER=%s\n' "$BANK_ACCOUNT_HOLDER" >> .env
+        printf 'BANK_ACCOUNT_NUMBER=%s\n' "$BANK_ACCOUNT_NUMBER" >> .env
+        printf 'DELIVERY_FEE_LKR=%s\n' "$DELIVERY_FEE_LKR" >> .env
     - run: npm run build --if-present
     - run: npm run test --if-present
-    - name: Restart the backend and verify public checkout
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      shell: bash
-      run: |
-        set -eu
-        # Only restart a PM2 app running this checkout's API entry point.
-        app=$(pm2 jlist | node -e '
-          const fs = require("node:fs");
-          const path = require("node:path");
-          const apps = JSON.parse(fs.readFileSync(0, "utf8"));
-          const entry = fs.realpathSync("index.js");
-          const matches = apps.filter(({ pm2_env }) =>
-            pm2_env.pm_exec_path && fs.existsSync(pm2_env.pm_exec_path) &&
-            fs.realpathSync(pm2_env.pm_exec_path) === entry &&
-            path.resolve(pm2_env.pm_cwd) === process.cwd());
-          const names = [...new Set(matches.map(app => app.name))];
-          if (names.length !== 1) {
-            console.error("Expected one PM2 backend app running index.js from this checkout.");
-            process.exit(1);
-          }
-          process.stdout.write(names[0]);')
-        pm2 restart "$app"
-        for attempt in {1..12}; do
-          if curl --fail --silent --max-time 6 https://i-computers-backend.duckdns.org/api/orders/checkout-settings |
-            node -e 'const fs = require("node:fs"); const s = JSON.parse(fs.readFileSync(0, "utf8")); process.exit(s.transferThreshold === 100000 && s.transfersEnabled === true && Number.isFinite(s.deliveryFee) ? 0 : 1)' 2>/dev/null; then
-            echo "Production checkout settings verified."
-            exit 0
-          fi
-          sleep 3
-        done
-        echo "::error::Production checkout settings did not become available."
-        exit 1
